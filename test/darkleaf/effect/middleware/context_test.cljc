@@ -3,6 +3,7 @@
    [darkleaf.effect.core :as e :refer [with-effects ! effect]]
    [darkleaf.effect.script :as script]
    [darkleaf.effect.middleware.context :as context]
+   [matcher-combinators.matchers :as m]
    #?(:clj  [clojure.core.match :refer [match]]
       :cljs [cljs.core.match :refer-macros [match]])
    [clojure.test :as t]))
@@ -31,9 +32,9 @@
     (t/testing "script"
       (let [continuation (e/continuation ef)
             script       [{:args [0]}
-                          {:effect   [:update inc]
+                          {:effect   [:update (m/equals inc)]
                            :coeffect 1}
-                          {:effect   [:update + 2]
+                          {:effect   [:update (m/equals +) 2]
                            :coeffect 3}
                           {:effect   [:get]
                            :coeffect 3}
@@ -44,9 +45,9 @@
                              (e/continuation)
                              (context/wrap-context))
             script       [{:args [{:state 0} [0]]}
-                          {:effect   [{:state 0} [:update inc]]
+                          {:effect   [{:state 0} [:update (m/equals inc)]]
                            :coeffect [{:state 1} 1]}
-                          {:effect   [{:state 1} [:update + 2]]
+                          {:effect   [{:state 1} [:update (m/equals +) 2]]
                            :coeffect [{:state 3} 3]}
                           {:effect   [{:state 3} [:get]]
                            :coeffect [{:state 3} 3]}

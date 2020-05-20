@@ -6,6 +6,7 @@
   :dependencies [[org.clojure/clojure "1.10.1" :scope "provided"]
                  [org.clojure/clojurescript "1.10.597" :scope "provided"]
                  [cloroutine "10"]
+                 [nubank/matcher-combinators "1.5.2"]
                  [org.clojure/core.match "0.3.0" :scope "test"]]
   :plugins [[lein-doo "0.1.11"]]
 

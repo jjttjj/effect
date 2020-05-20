@@ -1,1 +1,2 @@
-{:deps {cloroutine {:mvn/version "10"}}}
+{:deps {cloroutine                 {:mvn/version "10"}
+        nubank/matcher-combinators {:mvn/version "1.5.2"}}}

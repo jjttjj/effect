@@ -4,11 +4,9 @@
    [clojure.test :as t]
    [clojure.string :as str]
    [clojure.data :as data]
+   [matcher-combinators.parser]
+   [matcher-combinators.core :as m]
    [darkleaf.effect.internal :as i]))
-
-(defprotocol Matcher
-  :extend-via-metadata true
-  (matcher-report [matcher actual]))
 
 (defn- with-exceptions [continuation]
   (when (some? continuation)
@@ -19,6 +17,14 @@
           [effect continuation])
         (catch #?(:clj RuntimeException, :cljs js/Error) ex
           [ex nil])))))
+
+(defn- matcher-report [matcher actual]
+  (let [{:matcher-combinators.result/keys [value] :as result}
+        (m/match matcher actual)]
+    (if-not (m/match? result)
+      {:type     :fail
+       :expected (list 'match? matcher actual)
+       :actual   value})))
 
 (defn- test-first-item [{:keys [report continuation]} {:keys [args]}]
   (let [[effect continuation] (continuation args)]
@@ -46,9 +52,7 @@
 
    (if (contains? item :effect)
      (if-some [report (matcher-report effect actual-effect)]
-       {:report (assoc report
-                       :type :fail
-                       :message "Wrong effect")}
+       {:report (assoc report :message "Wrong effect")}
        (next-step ctx coeffect)))
 
    {:report {:type     :fail
@@ -68,9 +72,7 @@
    (if (contains? item :final-effect)
      (if (some? continuation)
        (if-some [report (matcher-report final-effect actual-effect)]
-         {:report (assoc report
-                         :type (if (i/throwable? actual-effect) :error :fail)
-                         :message "Wrong final effect")}
+         {:report (assoc report :message "Wrong final effect")}
          {:report report})
        {:report {:type     :fail
                  :expected '(some? continuation)
@@ -79,9 +81,7 @@
 
    (if (contains? item :thrown)
      (if-some [report (matcher-report thrown actual-effect)]
-       {:report (assoc report
-                       :type :fail
-                       :message "Wrong exception")}
+       {:report (assoc report :message "Wrong exception")}
        {:report report}))
 
    (if (some? continuation)
@@ -92,9 +92,7 @@
 
    (if (contains? item :return)
      (if-some [report (matcher-report return actual-effect)]
-       {:report (assoc report
-                       :type :fail
-                       :message "Wrong return")}
+       {:report (assoc report :message "Wrong return")}
        {:report report}))
 
    {:report {:type     :fail
@@ -120,36 +118,3 @@
 (defn test [continuation script]
   (-> (test* continuation script)
       (t/do-report)))
-
-(defn- ex->data [ex]
-  {:type    (type ex)
-   :message (ex-message ex)
-   :data    (ex-data ex)})
-
-(extend-protocol Matcher
-  nil
-  (matcher-report [_ actual]
-    (if-not (nil? actual)
-      {:expected nil
-       :actual   actual}))
-
-  #?(:clj Object :cljs default)
-  (matcher-report [matcher actual]
-    (when (not= matcher actual)
-      {:expected matcher
-       :actual   actual
-       :diffs    (when-not (i/throwable? actual)
-                   [[actual (data/diff matcher actual)]])}))
-
-  #?(:clj Throwable, :cljs js/Error)
-  (matcher-report [matcher actual]
-    (i/<<-
-     (if-not (i/throwable? actual)
-       {:expected matcher
-        :actual   actual})
-     (let [matcher-data (ex->data matcher)
-           actual-data  (ex->data actual)])
-     (if-not (= matcher-data actual-data)
-       {:expected matcher
-        :actual   actual
-        :diffs    [[actual (data/diff matcher-data actual-data)]]}))))
