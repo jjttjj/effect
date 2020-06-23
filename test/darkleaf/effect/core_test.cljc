@@ -20,20 +20,21 @@
      :cljs (apply js/setTimeout f 0 args)))
 
 (t/deftest simple
-  (let [ef           (fn [k]
-                       (with-effects
-                         (int (* k (! (effect :random))))))
-        continuation (e/continuation ef)]
+  (let [ef (fn [k]
+             (with-effects
+               (int (* k (! (effect :random))))))]
     (t/testing "interpretator"
-      (let [handlers {:random (fn [] 0.1)}
-            f        (fn [k]
-                       (e/perform handlers continuation [k]))]
+      (let [continuation (e/continuation ef)
+            handlers     {:random (fn [] 0.1)}
+            f            (fn [k]
+                           (e/perform handlers continuation [k]))]
         (t/is (= 1 (f 10)))))
     (t/testing "script"
-      (let [script [{:args [10]}
-                    {:effect   [:random]
-                     :coeffect 0.1}
-                    {:return 1}]]
+      (let [continuation (e/continuation ef)
+            script       [{:args [10]}
+                          {:effect   [:random]
+                           :coeffect 0.1}
+                          {:return 1}]]
         (script/test continuation script)))))
 
 (t/deftest simple-async
@@ -81,53 +82,55 @@
         (f 10 #(check :respond %) #(check :raise %))))))
 
 (t/deftest stack-use-case
-  (let [nested-ef    (fn [x]
-                       (with-effects
-                         (! (effect :prn "start nested-ef"))
-                         (! (effect :prn x))
-                         (! (effect :read))))
-        ef           (fn [x]
-                       (with-effects
-                         (! (effect :prn "start ef"))
-                         (! (nested-ef x))))
-        continuation (e/continuation ef)]
+  (let [nested-ef (fn [x]
+                    (with-effects
+                      (! (effect :prn "start nested-ef"))
+                      (! (effect :prn x))
+                      (! (effect :read))))
+        ef        (fn [x]
+                    (with-effects
+                      (! (effect :prn "start ef"))
+                      (! (nested-ef x))))]
     (t/testing "interpretator"
-      (let [handlers {:prn  (fn [_]  nil)
-                      :read (fn [] "input string")}
-            f        (fn [x]
-                       (e/perform handlers continuation [x]))]
+      (let [continuation (e/continuation ef)
+            handlers     {:prn  (fn [_]  nil)
+                          :read (fn [] "input string")}
+            f            (fn [x]
+                           (e/perform handlers continuation [x]))]
         (t/is (= "input string" (f  "some val")))))
     (t/testing "script"
-      (let [script [{:args ["some val"]}
-                    {:effect   [:prn "start ef"]
-                     :coeffect nil}
-                    {:effect   [:prn "start nested-ef"]
-                     :coeffect nil}
-                    {:effect   [:prn "some val"]
-                     :coeffect nil}
-                    {:effect   [:read]
-                     :coeffect "input string"}
-                    {:return "input string"}]]
+      (let [continuation (e/continuation ef)
+            script       [{:args ["some val"]}
+                          {:effect   [:prn "start ef"]
+                           :coeffect nil}
+                          {:effect   [:prn "start nested-ef"]
+                           :coeffect nil}
+                          {:effect   [:prn "some val"]
+                           :coeffect nil}
+                          {:effect   [:read]
+                           :coeffect "input string"}
+                          {:return "input string"}]]
         (script/test continuation script)))))
 
 (t/deftest fallback
-  (let [ef           (fn [x]
-                       (with-effects
-                         (let [a (! (effect :eff))
-                               b (! [:not-effect])
-                               c (! (inc x))]
-                           [a b c])))
-        continuation (e/continuation ef)]
+  (let [ef (fn [x]
+             (with-effects
+               (let [a (! (effect :eff))
+                     b (! [:not-effect])
+                     c (! (inc x))]
+                 [a b c])))]
     (t/testing "interpretator"
-      (let [handlers {:eff (fn [] :coeff)}
-            f        (fn [x]
-                       (e/perform handlers continuation [x]))]
+      (let [continuation (e/continuation ef)
+            handlers     {:eff (fn [] :coeff)}
+            f            (fn [x]
+                           (e/perform handlers continuation [x]))]
         (t/is (= [:coeff [:not-effect] 1] (f 0)))))
     (t/testing "script"
-      (let [script [{:args [0]}
-                    {:effect   [:eff]
-                     :coeffect :coeff}
-                    {:return [:coeff [:not-effect] 1]}]]
+      (let [continuation (e/continuation ef)
+            script       [{:args [0]}
+                          {:effect   [:eff]
+                           :coeffect :coeff}
+                          {:return [:coeff [:not-effect] 1]}]]
         (script/test continuation script)))))
 
 (t/deftest effect-as-value
@@ -172,32 +175,32 @@
           f            (fn []
                          (e/perform handlers continuation []))]
       (t/is (thrown-with-msg? ExceptionInfo #"Test"
-                              (f))))
-    (t/testing "in handler"
-      (let [ef           (fn []
-                           (with-effects
+                              (f)))))
+  (t/testing "in handler"
+    (let [ef           (fn []
+                         (with-effects
+                           (! (effect :prn "Throw!"))
+                           :some-val))
+          continuation (e/continuation ef)
+          handlers     {:prn (fn [msg]
+                               (throw (ex-info "Test" {})))}
+          f            (fn []
+                         (e/perform handlers continuation []))]
+      (t/is (thrown-with-msg? ExceptionInfo #"Test"
+                              (f)))))
+  (t/testing "catch in ef"
+    (let [ef           (fn []
+                         (with-effects
+                           (try
                              (! (effect :prn "Throw!"))
-                             :some-val))
-            continuation (e/continuation ef)
-            handlers     {:prn (fn [msg]
-                                 (throw (ex-info "Test" {})))}
-            f            (fn []
-                           (e/perform handlers continuation []))]
-        (t/is (thrown-with-msg? ExceptionInfo #"Test"
-                                (f)))))
-    (t/testing "catch in ef"
-      (let [ef           (fn []
-                           (with-effects
-                             (try
-                               (! (effect :prn "Throw!"))
-                               (catch #?(:clj Throwable, :cljs js/Error) error
-                                 :error))))
-            continuation (e/continuation ef)
-            handlers     {:prn (fn [msg]
-                                 (throw (ex-info "Test" {})))}
-            f            (fn []
-                           (e/perform handlers continuation []))]
-        (t/is (= :error (f)))))))
+                             (catch #?(:clj Throwable, :cljs js/Error) error
+                               :error))))
+          continuation (e/continuation ef)
+          handlers     {:prn (fn [msg]
+                               (throw (ex-info "Test" {})))}
+          f            (fn []
+                         (e/perform handlers continuation []))]
+      (t/is (= :error (f))))))
 
 (t/deftest exceptions-in-ef-async
   (let [ef           (fn []
@@ -256,14 +259,16 @@
                 (done))]
         (f #(check :respond %) #(check :raise %))))))
 
-(t/deftest multi-shot
-  (let [ef                 (fn []
-                             (with-effects
-                               (! (effect :first))
-                               (! (effect :second))
-                               (! (effect :third))))
-        continuation       (e/continuation ef)
-        [eff continuation] (continuation [])]
-    (t/is (= [:second]
-             (first (continuation "first coeffect"))
-             (first (continuation "first coeffect"))))))
+;; (t/deftest multi-shot
+;;   (let [ef                 (fn []
+;;                              (with-effects
+;;                                (! (effect :first))
+;;                                (! (effect :second))
+;;                                (! (effect :third))))
+;;         continuation       (e/continuation ef)
+;;         [eff continuation] (continuation [])]
+;;     (t/is (= [:second]
+;;              (first (continuation "first coeffect"))
+;;              (first (continuation "first coeffect"))))))
+
+(time (t/run-tests))

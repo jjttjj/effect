@@ -37,23 +37,20 @@
       :diffs    [[actual-as-data (data/diff expected actual-as-data)]]})))
 
 (defn- with-exceptions [continuation]
-  (when (some? continuation)
-    (fn [coeffect]
-      (try
-        (let [[effect continuation] (continuation coeffect)
-              continuation          (with-exceptions continuation)]
-          [effect continuation])
-        (catch #?(:clj RuntimeException, :cljs js/Error) ex
-          [ex nil])))))
+  (fn [coeffect]
+    (try
+      (continuation coeffect)
+      (catch #?(:clj RuntimeException, :cljs js/Error) ex
+        ex))))
 
 (defn- test-first-item [{:keys [report continuation]} {:keys [args]}]
-  (let [[effect continuation] (continuation args)]
+  (let [effect (continuation args)]
     {:report        report
      :actual-effect effect
      :continuation  continuation}))
 
 (defn- next-step [{:keys [report continuation]} coeffect]
-  (let [[actual-effect continuation] (continuation coeffect)]
+  (let [actual-effect (continuation coeffect)]
     {:report        report
      :actual-effect actual-effect
      :continuation  continuation}))
@@ -64,7 +61,7 @@
    (if (not= :pass (:type report))
      {:report report})
 
-   (if (nil? continuation)
+   (if (not= :effect (i/kind actual-effect))
      (if (i/throwable? actual-effect)
        {:report {:type     :error
                  :expected effect
@@ -95,7 +92,7 @@
      {:report report})
 
    (if (contains? item :final-effect)
-     (if (some? continuation)
+     (if (= :effect (i/kind actual-effect))
        (if-some [report (match-value final-effect actual-effect)]
          {:report (assoc report :message "Wrong final effect")}
          {:report report})
@@ -114,7 +111,7 @@
        {:report (assoc report :message "Wrong exception")}
        {:report report}))
 
-   (if (some? continuation)
+   (if (= :effect (i/kind actual-effect))
      {:report {:type     :fail
                :expected nil
                :actual   actual-effect

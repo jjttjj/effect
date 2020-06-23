@@ -2,7 +2,8 @@
   (:require
    [cloroutine.core :refer [cr]]
    [darkleaf.effect.internal :as i])
-  #?(:cljs (:require-macros [darkleaf.effect.core :refer [with-effects]])))
+  #?(:cljs (:require-macros [darkleaf.effect.core :refer [with-effects]]))
+  #?(:clj (:import [java.util Stack])))
 
 (defn effect [tag & args]
   (-> (cons tag args)
@@ -43,12 +44,26 @@
             (recur stack val)))))))
 
 (defn continuation [effn]
-  (fn [args]
-    (let [coroutine (apply effn args)
-          stack     (list coroutine)
-          cont      (stack->continuation stack)
-          coeffect  ::not-used]
-      (cont coeffect))))
+  (let [stack   (Stack.)
+        initial (with-effects
+                  (let [args (! (effect ::not-used))]
+                    (! (apply effn args))))]
+    (initial)
+    (.push stack initial)
+    (fn [coeffect-or-args]
+      (if (.empty stack)
+        coeffect-or-args
+        (let [coroutine (.peek stack)
+              val       (i/with-coeffect coeffect-or-args coroutine)]
+          (case (i/kind val)
+            :effect       val
+            :coroutine    (do
+                            (.push stack val)
+                            (recur ::not-used))
+            :return-value (do
+                            (.pop stack)
+                            (recur (i/unwrap-value val)))
+            (recur val)))))))
 
 (defn- exec-effect
   ([handlers [tag & args]]
@@ -68,14 +83,14 @@
 
 (defn perform
   ([handlers continuation coeffect-or-args]
-   (loop [[effect continuation] (continuation coeffect-or-args)]
-     (if (nil? continuation)
+   (loop [effect (continuation coeffect-or-args)]
+     (if (not= :effect (i/kind effect))
        effect
        (recur (continuation (exec-effect handlers effect))))))
   ([handlers continuation coeffect-or-args respond raise]
    (try
-     (let [[effect continuation] (continuation coeffect-or-args)]
-       (if (nil? continuation)
+     (let [effect (continuation coeffect-or-args)]
+       (if (not= :effect (i/kind effect))
          (respond effect)
          (exec-effect handlers effect
                       (fn [coeffect]
