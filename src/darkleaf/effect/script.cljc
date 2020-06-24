@@ -4,6 +4,7 @@
    [clojure.test :as t]
    [clojure.string :as str]
    [clojure.data :as data]
+   [darkleaf.effect.core :as core]
    [darkleaf.effect.internal :as i]))
 
 (defn- match-value [expected actual]
@@ -37,23 +38,23 @@
       :diffs    [[actual-as-data (data/diff expected actual-as-data)]]})))
 
 (defn- with-exceptions [continuation]
-  (when (some? continuation)
-    (fn [coeffect]
+  (reify
+    core/Continuation
+    (done? [_] (core/done? continuation))
+    (run [_ coeffect]
       (try
-        (let [[effect continuation] (continuation coeffect)
-              continuation          (with-exceptions continuation)]
-          [effect continuation])
+        (core/run continuation coeffect)
         (catch #?(:clj RuntimeException, :cljs js/Error) ex
-          [ex nil])))))
+          ex)))))
 
 (defn- test-first-item [{:keys [report continuation]} {:keys [args]}]
-  (let [[effect continuation] (continuation args)]
+  (let [effect (core/run continuation args)]
     {:report        report
      :actual-effect effect
      :continuation  continuation}))
 
 (defn- next-step [{:keys [report continuation]} coeffect]
-  (let [[actual-effect continuation] (continuation coeffect)]
+  (let [actual-effect (core/run continuation coeffect)]
     {:report        report
      :actual-effect actual-effect
      :continuation  continuation}))
@@ -64,7 +65,7 @@
    (if (not= :pass (:type report))
      {:report report})
 
-   (if (nil? continuation)
+   (if (core/done? continuation)
      (if (i/throwable? actual-effect)
        {:report {:type     :error
                  :expected effect
@@ -95,7 +96,7 @@
      {:report report})
 
    (if (contains? item :final-effect)
-     (if (some? continuation)
+     (if (not (core/done? continuation))
        (if-some [report (match-value final-effect actual-effect)]
          {:report (assoc report :message "Wrong final effect")}
          {:report report})
@@ -114,7 +115,7 @@
        {:report (assoc report :message "Wrong exception")}
        {:report report}))
 
-   (if (some? continuation)
+   (if (not (core/done? continuation))
      {:report {:type     :fail
                :expected nil
                :actual   actual-effect

@@ -2,7 +2,64 @@
   (:require
    [cloroutine.core :refer [cr]]
    [darkleaf.effect.internal :as i])
-  #?(:cljs (:require-macros [darkleaf.effect.core :refer [with-effects]])))
+  #?(:cljs (:require-macros [darkleaf.effect.core :refer [with-effects]]))
+  (:import
+   [java.util Stack]))
+
+(set! *warn-on-reflection* true)
+
+(defprotocol Continuation
+  (done? [this])
+  (run [this coeffect])
+  #_(clone [this]))
+
+(defprotocol State
+  (set-state [this state]))
+
+(defprotocol ContinuationState
+  (state-done? [this impl])
+  (state-run [this impl coeffect]))
+
+(deftype ContinuationImpl [^:unsynchronized-mutable state]
+  Continuation
+  (done? [this] (state-done? state this))
+  (run [this coeffect] (state-run state this coeffect))
+  State
+  (set-state [this new-state]
+    (set! state new-state)))
+
+(deftype NewContinuationState [effn]
+  ContinuationState
+  (state-done? [_ _] false)
+  (state-run [this impl args]
+    (let [coroutine  (apply effn args)
+          stack      (Stack.)
+          _          (.push stack coroutine)
+          used-state (->UsedContinuationState stack false)]
+      (set-state impl used-state)
+      (run impl ::not-used))))
+
+(deftype UsedContinuationState [^Stack stack ^:unsynchronized-mutable done?]
+  ContinuationState
+  (state-done? [_ _] done?)
+  (state-run [this _ coeffect]
+    (try
+      (loop [coeffect coeffect]
+        (if (.empty stack)
+          (do (set! done? true)
+              coeffect)
+          (let [coroutine (.peek stack)
+                val       (i/with-coeffect coeffect coroutine)]
+            (case (i/kind val)
+              :effect       val
+              :coroutine    (do (.push stack val)
+                                (recur ::not-used))
+              :return-value (do (.pop stack)
+                                (recur (i/unwrap-value val)))
+              (recur val)))))
+      (catch #?(:clj Throwable, :cljs js/Error) ex
+        (set! done? true)
+        (throw ex)))))
 
 (defn effect [tag & args]
   (-> (cons tag args)
@@ -18,37 +75,9 @@
           (do ~@body)))
      :coroutine))
 
-(defn- update-head [coll f & args]
-  (if (seq coll)
-    (-> coll
-        (pop)
-        (conj (apply f (peek coll) args)))
-    coll))
-
-(defn- clone-coroutine [coroutine]
-  (coroutine identity))
-
-(defn- stack->continuation [stack]
-  (fn [coeffect]
-    (loop [stack    (update-head stack clone-coroutine)
-           coeffect coeffect]
-      (if (empty? stack)
-        [coeffect nil]
-        (let [coroutine (peek stack)
-              val       (i/with-coeffect coeffect coroutine)]
-          (case (i/kind val)
-            :effect       [val (stack->continuation stack)]
-            :coroutine    (recur (conj stack val) ::not-used)
-            :return-value (recur (pop stack) (i/unwrap-value val))
-            (recur stack val)))))))
-
 (defn continuation [effn]
-  (fn [args]
-    (let [coroutine (apply effn args)
-          stack     (list coroutine)
-          cont      (stack->continuation stack)
-          coeffect  ::not-used]
-      (cont coeffect))))
+  (let [state (->NewContinuationState effn)]
+    (->ContinuationImpl state)))
 
 (defn- exec-effect
   ([handlers [tag & args]]
@@ -68,14 +97,14 @@
 
 (defn perform
   ([handlers continuation coeffect-or-args]
-   (loop [[effect continuation] (continuation coeffect-or-args)]
-     (if (nil? continuation)
+   (loop [effect (run continuation coeffect-or-args)]
+     (if (done? continuation)
        effect
-       (recur (continuation (exec-effect handlers effect))))))
+       (recur (run continuation (exec-effect handlers effect))))))
   ([handlers continuation coeffect-or-args respond raise]
    (try
-     (let [[effect continuation] (continuation coeffect-or-args)]
-       (if (nil? continuation)
+     (let [effect (run continuation coeffect-or-args)]
+       (if (done? continuation)
          (respond effect)
          (exec-effect handlers effect
                       (fn [coeffect]
