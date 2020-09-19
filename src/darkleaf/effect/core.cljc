@@ -45,9 +45,8 @@
          (reset! return# value#)
          (reset! coeffect-fn# (fn [] (throw -interrupted-exception)))
          (reset! effect# (coroutine#))
-         nil)
-       (clone [_]
-         (coroutine# identity)))))
+         nil))))
+
 
 #_(let [cont (with-effects
                (try
