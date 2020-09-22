@@ -44,7 +44,7 @@
                 ::whatever]]
     (t/is (= {:type     :fail
               :expected nil
-              :actual   [:my-effect]
+              :actual   (effect :my-effect)
               :message  "An extra effect"}
              (script/test* ef script)))))
 
@@ -53,7 +53,7 @@
                  (with-effects
                    (! (effect :my-effect :arg-1))))
         script [{:args []}
-                {:effect   [:my-effect :arg-1]
+                {:effect   (effect :my-effect :arg-1)
                  :coeffect 42}
                 {:value 42}]]
     (script/test ef script)))
@@ -63,14 +63,16 @@
                  (with-effects
                    (! (effect :my-wrong-effect :arg-1))))
         script [{:args []}
-                {:effect   [:my-effect :arg-1]
+                {:effect   (effect :my-effect :arg-1)
                  :coeffect 42}
                 ::whatever]]
     (t/is (= {:type     :fail
-              :expected [:my-effect :arg-1]
-              :actual   [:my-wrong-effect :arg-1]
-              :diffs    [[[:my-wrong-effect :arg-1]
-                          [[:my-effect] [:my-wrong-effect] [nil :arg-1]]]]
+              :expected (effect :my-effect :arg-1)
+              :actual   (effect :my-wrong-effect :arg-1)
+              :diffs    [[(effect :my-wrong-effect :arg-1)
+                          [{:tag :my-effect}
+                           {:tag :my-wrong-effect}
+                           {:args [:arg-1]}]]]
               :message  "A wrong effect"}
              (script/test* ef script)))))
 
@@ -79,11 +81,11 @@
                  (with-effects
                    42))
         script [{:args []}
-                {:effect   [:my-effect]
+                {:effect   (effect :my-effect)
                  :coeffect :my-value}
                 ::whatever]]
     (t/is (= {:type     :fail
-              :expected [:my-effect]
+              :expected (effect :my-effect)
               :actual   42
               :message  "An unfinished continuation. An effect is expected."}
              (script/test* ef script)))))
@@ -94,7 +96,7 @@
                    (! (effect :my-effect))
                    42))
         script [{:args []}
-                {:effect [:my-effect]
+                {:effect (effect :my-effect)
                  :return 0}
                 {:value 0}]]
     (script/test ef script)))
@@ -108,20 +110,74 @@
                        (! (effect :finish))))
                    42))
         script [{:args []}
-                {:effect [:my-effect]
+                {:effect (effect :my-effect)
                  :return 0}
-                {:effect   [:finish]
+                {:effect   (effect :finish)
                  :coeffect nil}
                 {:value 0}]]
     (script/test ef script)))
 
-;; (t/deftest thrown-test
-;;   (let [ef     (fn []
-;;                  (with-effects
-;;                    (throw (ex-info "Fail" {}))))
-;;         script [{:args []}
-;;                 {:thrown _}]]
-;;     (script/test ef script)))
+(t/deftest throw-test
+  (let [ef     (fn []
+                 (with-effects
+                   (try
+                     (! (effect :my-effect))
+                     (catch Exception ex
+                       (ex-message ex)))))
+        script [{:args []}
+                {:effect (effect :my-effect)
+                 :throw  (ex-info "Error" {})}
+                {:value "Error"}]]
+    (script/test ef script)))
+
+(t/deftest thrown-test
+  (let [ef     (fn []
+                 (with-effects
+                   (! (effect :my-effect))))
+        script [{:args []}
+                {:effect (effect :my-effect)
+                 :throw  (ex-info "Error" {})}
+                ::whatever]]
+    (t/is (thrown-with-msg? ExceptionInfo #"Error"
+                            (script/test ef script)))))
+
+(t/deftest stack-use-case
+  (let [nested-ef (fn [x]
+                    (with-effects
+                      (! (effect :prn "start nested-ef"))
+                      (! (effect :prn x))
+                      (! (effect :read))))
+        ef        (fn [x]
+                    (with-effects
+                      (! (effect :prn "start ef"))
+                      (! (nested-ef x))))
+        script    [{:args ["some val"]}
+                   {:effect   (effect :prn "start ef")
+                    :coeffect nil}
+                   {:effect   (effect :prn "start nested-ef")
+                    :coeffect nil}
+                   {:effect   (effect :prn "some val")
+                    :coeffect nil}
+                   {:effect   (effect :read)
+                    :coeffect "input string"}
+                   {:value "input string"}]]
+    (script/test ef script)))
+
+(t/deftest stacked-throw-test
+  (let [nested-ef (fn []
+                    (with-effects
+                      (! (effect :my-effect))))
+        ef     (fn []
+                 (with-effects
+                   (try
+                     (! (nested-ef))
+                     (catch ExceptionInfo ex
+                       (ex-message ex)))))
+        script [{:args []}
+                {:effect (effect :my-effect)
+                 :throw  (ex-info "Error" {})}
+                {:value "Error"}]]
+    (script/test ef script)))
 
 (t/deftest script)
     ;; (t/testing "exception as coeffect"

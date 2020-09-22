@@ -4,7 +4,8 @@
    [clojure.test :as t]
    [darkleaf.effect.proto :as p]
    ;; [clojure.string :as str]
-   [clojure.data :as data]))
+   [clojure.data :as data]
+   [darkleaf.effect.impl :as i]))
    ;; [darkleaf.effect.util :as u]))
 
 (defmacro <<- [& body]
@@ -48,11 +49,8 @@
 ;;           [ex nil])))))
 
 (defn- test-first-item [{:keys [report ef]} {:keys [args]}]
-  (try
-    {:report       report
-     :continuation (apply ef args)}
-    #_(catch RuntimeException ex
-        {:exception ex})))
+  {:report       report
+   :continuation (-> ef (apply args) (i/wrapper))})
 
 ;; (defn- next-step [{:keys [report continuation]} coeffect]
 ;;   (let [[actual-effect continuation] (continuation coeffect)]
@@ -62,7 +60,7 @@
 
 
 (defn- test-middle-item [{:keys [report continuation] :as ctx}
-                         {:keys [effect coeffect return] :as item}]
+                         {:keys [effect coeffect return throw] :as item}]
   (<<-
    (if (not= :pass (:type report))
      {:report report})
@@ -90,6 +88,11 @@
    (if (contains? item :return)
      (do
        (p/return continuation return)
+       ctx))
+
+   (if (contains? item :throw)
+     (do
+       (p/throw continuation throw)
        ctx))
 
    {:report {:type :fail
